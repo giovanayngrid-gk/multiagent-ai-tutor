@@ -13,7 +13,7 @@ st.caption("Um sistema com 3 agentes orquestrados por um classificador para melh
 # --- 2. INICIALIZAÇÃO DO MODELO (LLM) ---
 try:
     # --- MUDANÇA 3: Inicializar o ChatOllama ---
-    llm = ChatOllama(model="ollama run llama3.2:1b", temperature=0.7)
+    llm = ChatOllama(model="llama3.2:1b", temperature=0.7)
     # Testa a conexão com o Ollama
     llm.invoke("Olá") 
 except Exception as e:
