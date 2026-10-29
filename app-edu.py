@@ -1,6 +1,5 @@
 import streamlit as st
 import os
-# --- MUDANÇA 1: Importar o ChatOllama ---
 from langchain_community.chat_models import ChatOllama
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
@@ -11,15 +10,10 @@ st.set_page_config(page_title="Seu Tutor Educacional", page_icon="🧠", layout=
 st.title("🤖 Tutor Educacional Personalizado")
 st.caption("Um sistema com 3 agentes orquestrados por um classificador para melhorar sua vida estudantil.")
 
-# --- MUDANÇA 2: Bloco de API Key---
-# Não precisamos mais de chaves de API, pois o modelo roda localmente.
-
 # --- 2. INICIALIZAÇÃO DO MODELO (LLM) ---
-
-# Vamos usar o Llama 3 (via Ollama) para todos os agentes
 try:
     # --- MUDANÇA 3: Inicializar o ChatOllama ---
-    llm = ChatOllama(model="llama3:8b", temperature=0.7)
+    llm = ChatOllama(model="ollama run llama3.2:1b", temperature=0.7)
     # Testa a conexão com o Ollama
     llm.invoke("Olá") 
 except Exception as e:
