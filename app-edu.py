@@ -1,7 +1,7 @@
 import streamlit as st
-import os
 from langchain_community.chat_models import ChatOllama
-from langchain_core.prompts import PromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.output_parsers import StrOutputParser
 
 # --- 1. CONFIGURAÇÃO DA PÁGINA ---
@@ -11,106 +11,102 @@ st.caption("Um sistema com 3 agentes orquestrados por um classificador para melh
 
 # --- 2. INICIALIZAÇÃO DO MODELO (LLM) ---
 try:
-    # Temperatura reduzida para 0.2 para evitar alucinações no modelo de 1B
-    llm = ChatOllama(model="llama3.2:1b", temperature=0.2)
-    llm.invoke("Teste") 
+    llm = ChatOllama(model="llama3.2:1b", temperature=0.3)
+    llm.invoke("Oi")
 except Exception as e:
     st.error(f"Erro ao conectar-se ao Ollama: {e}")
-    st.error("Verifique se o Ollama está em execução no seu computador.")
     st.stop()
 
-# --- 3. FUNÇÃO AUXILIAR DE MEMÓRIA ---
-def obter_historico_recente(mensagens, limite=4):
-    """Formata as últimas mensagens para dar contexto aos agentes."""
-    historico_str = ""
-    # Pega as últimas 'limite' mensagens (excluindo a atual que já vai no 'input')
-    for msg in mensagens[-(limite+1):-1]:
-        papel = "Aluno" if msg["role"] == "user" else "Tutor"
-        historico_str += f"{papel}: {msg['content']}\n"
-    return historico_str if historico_str else "Início da conversa."
-
-# --- 4. DEFINIÇÃO DOS PROMPTS DOS AGENTES ---
-
-# AGENTE 1: O Teórico
-prompt_agente_1 = PromptTemplate(
-    template="""Você é um Tutor Teórico especialista. Explique o tema pedido de forma clara, direta e didática.
-NÃO cumprimente o aluno (não diga Olá). Vá direto à explicação teórica.
-
-Histórico recente da conversa:
-{historico}
-
-Pedido atual do aluno: {input}
-
-Explicação Teórica:""",
-    input_variables=["input", "historico"],
-)
-
-# AGENTE 2: O Prático
-prompt_agente_2 = PromptTemplate(
-    template="""Você é um Tutor Prático. Crie exemplos simples do dia-a-dia e analogias fáceis para explicar o assunto.
-NÃO cumprimente o aluno (não diga Olá) e não dê definições formais, foque apenas no exemplo prático.
-
-Histórico recente da conversa:
-{historico}
-
-Pedido atual do aluno: {input}
-
-Exemplo Prático:""",
-    input_variables=["input", "historico"],
-)
-
-# AGENTE 4: O Gerador de Questões e Avaliador
-prompt_agente_4 = PromptTemplate(
-    template="""Você é um Assistente de Ensino avaliador. NUNCA diga 'Olá' ou 'Tudo bem?'.
-
-Histórico recente da conversa:
-{historico}
-
-Tópico de estudo: {topico_atual}
-Mensagem atual do aluno: {input}
-
-Siga ESTRITAMENTE uma das regras abaixo conforme o contexto:
-- Se o Tutor acabou de fazer uma pergunta no Histórico e a Mensagem atual do aluno for uma resposta (ex: 'A', 'B', 'C', 'D' ou tentativa de resposta), diga se ele acertou ou errou e explique o motivo de forma curta.
-- Se o aluno pediu um exercício ou pergunta, crie UMA pergunta de múltipla escolha clara (com opções A, B, C, D) sobre {topico_atual}, onde apenas uma opção esteja correta.
-- Se o aluno apenas informou o que quer estudar, confirme o tema e pergunte se ele prefere começar pela explicação teórica, um exemplo prático ou um exercício.
-
-Sua Resposta:""",
-    input_variables=["input", "topico_atual", "historico"],
-)
-
-# AGENTE 3: O ORQUESTRADOR
-prompt_orquestrador = PromptTemplate(
-    template="""Analise o histórico e a mensagem atual do aluno para escolher o agente correto.
-
-Histórico recente:
-{historico}
-
-Mensagem atual do aluno: "{input}"
-
-Regras de classificação:
-- TEORICO: O aluno quer aprender sobre um tema, conhecer autores/conceitos, pede explicação ou diz "vamos estudar X", "quero conhecer X", "o que é X".
-- PRATICO: O aluno pede um exemplo, analogia ou aplicação prática.
-- GERADOR_QUESTOES: O aluno pede uma questão/teste, OU está a responder a uma pergunta feita pelo Tutor anteriormente (ex: "letra B", "A", "acho que é a C").
-
-Responda APENAS com uma única palavra: TEORICO, PRATICO ou GERADOR_QUESTOES.
-Classificação:""",
-    input_variables=["input", "historico"],
-)
-
-# --- 5. CONFIGURAÇÃO DAS "CADEIAS" (CHAINS) DO LANGCHAIN ---
 parser = StrOutputParser()
-chain_orquestrador = prompt_orquestrador | llm | parser
-chain_agente_1 = prompt_agente_1 | llm | parser
-chain_agente_2 = prompt_agente_2 | llm | parser
-chain_agente_4 = prompt_agente_4 | llm | parser
 
-# --- 6. LÓGICA DO CHAT (STATE E INTERFACE) ---
+# --- 3. PROMPTS ESTRUTURADOS (CHAT NATIVO PARA NÃO VAZAR TEXTO) ---
+
+# AGENTE 1: Teórico
+prompt_teorico = ChatPromptTemplate.from_messages([
+    ("system", "És um professor de {topico}. Explica o que o aluno pediu de forma clara, direta e didática em português. Não faças perguntas de múltipla escolha."),
+    MessagesPlaceholder(variable_name="historico"),
+    ("human", "{input}")
+])
+
+# AGENTE 2: Prático
+prompt_pratico = ChatPromptTemplate.from_messages([
+    ("system", "És um professor prático de {topico}. Dá apenas um exemplo prático do dia a dia ou uma analogia simples para explicar o que o aluno pediu."),
+    MessagesPlaceholder(variable_name="historico"),
+    ("human", "{input}")
+])
+
+# AGENTE 4A: Criador de Questões
+prompt_criar_questao = ChatPromptTemplate.from_messages([
+    ("system", "És um professor de {topico}. Cria apenas UMA pergunta de múltipla escolha sobre o tema da conversa com 4 opções (A, B, C, D). Não reveles a resposta certa agora."),
+    MessagesPlaceholder(variable_name="historico"),
+    ("human", "{input}")
+])
+
+# AGENTE 4B: Avaliador de Resposta
+prompt_avaliar = ChatPromptTemplate.from_messages([
+    ("system", "Olha para a última pergunta feita na conversa. O aluno respondeu '{input}'. Diz se a opção está correta ou incorreta e explica o porquê em duas frases."),
+    MessagesPlaceholder(variable_name="historico"),
+    ("human", "{input}")
+])
+
+# ORQUESTRADOR SIMPLIFICADO (Para o modelo 1B não se perder)
+prompt_orquestrador = ChatPromptTemplate.from_messages([
+    ("system", "Classifica a frase do aluno numa única palavra: TEORICO (se quer aprender ou entender um assunto), PRATICO (se pede exemplo) ou QUESTAO (se pede exercício/teste). Responde só com uma palavra."),
+    ("human", "{input}")
+])
+
+chain_teorico = prompt_teorico | llm | parser
+chain_pratico = prompt_pratico | llm | parser
+chain_questao = prompt_criar_questao | llm | parser
+chain_avaliar = prompt_avaliar | llm | parser
+chain_orquestrador = prompt_orquestrador | llm | parser
+
+# --- 4. FUNÇÕES AUXILIARES ---
+def formatar_historico_langchain(mensagens, limite=4):
+    """Converte o histórico do Streamlit para objetos nativos do LangChain."""
+    hist = []
+    for msg in mensagens[-(limite+1):-1]:
+        if msg["role"] == "user":
+            hist.append(HumanMessage(content=msg["content"]))
+        else:
+            hist.append(AIMessage(content=msg["content"]))
+    return hist
+
+def classificar_intencao(texto_usuario):
+    """Orquestrador Híbrido: Regras rápidas + LLM de fallback para garantir precisão no modelo 1B."""
+    t = texto_usuario.strip().lower()
+    
+    # 1. Verifica se é resposta a um exercício (A, B, C, D)
+    if t in ["a", "b", "c", "d", "letra a", "letra b", "letra c", "letra d"] or t.startswith("resposta"):
+        return "AVALIADOR_QUESTOES"
+    
+    # 2. Verifica se pede exemplo prático
+    if any(p in t for p in ["exemplo", "prático", "pratico", "analogia", "cotidiano", "dia a dia"]):
+        return "PRATICO"
+        
+    # 3. Verifica se pede teste/questão
+    if any(p in t for p in ["teste", "pergunta", "questão", "questao", "exercício", "exercicio", "quiz"]):
+        return "GERADOR_QUESTOES"
+        
+    # 4. Verifica se quer estudar/entender teoria
+    if any(p in t for p in ["estudar", "entender", "conhecer", "explica", "o que é", "quem foi", "quem foram", "filosofia", "sobre"]):
+        return "TEORICO"
+        
+    # 5. Caso contrário, usa o LLM Orquestrador
+    res = chain_orquestrador.invoke({"input": texto_usuario}).strip().upper()
+    if "PRATICO" in res:
+        return "PRATICO"
+    elif "QUEST" in res:
+        return "GERADOR_QUESTOES"
+    return "TEORICO"
+
+# --- 5. INTERFACE E ESTADO DO CHAT ---
 if "messages" not in st.session_state:
     st.session_state.messages = [
-        {"role": "assistant", "content": "Olá! Sou seu Tutor Educacional. O que vamos estudar hoje?"}
+        {"role": "assistant", "content": "Olá! Sou o teu Tutor Educacional. Que tema vamos estudar hoje?"}
     ]
 if "topico_atual" not in st.session_state:
-    st.session_state.topico_atual = "Geral"
+    st.session_state.topico_atual = "Conhecimentos Gerais"
 
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
@@ -121,46 +117,32 @@ if user_input := st.chat_input("Pergunte algo..."):
     with st.chat_message("user"):
         st.markdown(user_input)
 
-    # Obtém o histórico das últimas interações antes de chamar os modelos
-    historico_formatado = obter_historico_recente(st.session_state.messages)
+    historico_lc = formatar_historico_langchain(st.session_state.messages)
 
     with st.chat_message("assistant"):
         with st.spinner("Orquestrador está a classificar..."):
-            # Se a resposta do usuário for apenas 1 letra (ex: A, B, C, D), força a rota de questões/avaliação
-            if user_input.strip().upper() in ["A", "B", "C", "D", "LETRA A", "LETRA B", "LETRA C", "LETRA D"]:
-                classificacao = "GERADOR_QUESTOES"
-            else:
-                classificacao = chain_orquestrador.invoke({
-                    "input": user_input,
-                    "historico": historico_formatado
-                }).strip().upper()
-                
+            classificacao = classificar_intencao(user_input)
             st.info(f"Debug: Orquestrador classificou como: `{classificacao}`")
-            
+
         with st.spinner(f"Agente ({classificacao}) está a pensar..."):
-            if "TEORICO" in classificacao:
+            # Atualiza o tópico quando o aluno introduz um assunto novo na rota teórica
+            if classificacao == "TEORICO" and len(user_input.split()) >= 2:
                 st.session_state.topico_atual = user_input
-                resposta = chain_agente_1.invoke({
-                    "input": user_input,
-                    "historico": historico_formatado
-                })
-            
-            elif "PRATICO" in classificacao:
-                resposta = chain_agente_2.invoke({
-                    "input": user_input,
-                    "historico": historico_formatado
-                })
-            
+
+            dados = {
+                "input": user_input,
+                "topico": st.session_state.topico_atual,
+                "historico": historico_lc
+            }
+
+            if classificacao == "TEORICO":
+                resposta = chain_teorico.invoke(dados)
+            elif classificacao == "PRATICO":
+                resposta = chain_pratico.invoke(dados)
+            elif classificacao == "AVALIADOR_QUESTOES":
+                resposta = chain_avaliar.invoke(dados)
             else:
-                # Atualiza o tópico se ainda estiver no padrão inicial e a mensagem for longa
-                if st.session_state.topico_atual == "Geral" and len(user_input.split()) > 2:
-                    st.session_state.topico_atual = user_input
-                    
-                resposta = chain_agente_4.invoke({
-                    "input": user_input, 
-                    "topico_atual": st.session_state.topico_atual,
-                    "historico": historico_formatado
-                })
-        
+                resposta = chain_questao.invoke(dados)
+
         st.markdown(resposta)
         st.session_state.messages.append({"role": "assistant", "content": resposta})
